@@ -22,6 +22,21 @@
   .phase{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;font-size:12px}
   .phase button{background:none;border:none;color:var(--dim);padding:6px 12px;font-weight:600;font-family:inherit;cursor:pointer}
   .phase button.on{background:var(--accent);color:var(--accent-ink)}
+  .hdr-right{display:flex;gap:8px;align-items:center}
+  .wake{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--card);
+    color:var(--dim);font-size:15px;cursor:pointer;line-height:1}
+  .wake.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .pill.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  #timer{position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:20;display:none;
+    background:var(--card2);border:1px solid var(--accent);border-radius:999px;padding:10px 18px;
+    font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:.06em;color:var(--ink);cursor:pointer;
+    box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  #timer b{color:var(--accent)}
+  .deload-tag{display:inline-block;background:var(--accent);color:var(--accent-ink);font-size:11px;
+    font-weight:600;border-radius:6px;padding:2px 8px;margin-left:8px;vertical-align:middle;letter-spacing:.05em}
+  .load.locked{opacity:.7}
+  .load.locked button{pointer-events:none;color:var(--line)}
+  .load.locked input{pointer-events:none;color:var(--accent)}
   .phase button:focus-visible,.chip:focus-visible,.pill:focus-visible,.pip:focus-visible,.ghost:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   .chips{display:flex;gap:8px;overflow-x:auto;padding:12px 0 4px;scrollbar-width:none}
@@ -51,12 +66,23 @@
   .reps{font-family:'Oswald',sans-serif;font-size:15px;color:var(--accent);white-space:nowrap;letter-spacing:.03em}
   .note{color:var(--dim);font-size:12.5px;line-height:1.5;margin-top:4px}
   .note b{color:var(--ink)}
-  .pips{display:flex;gap:10px;margin-top:12px}
+  .pips{display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap}
   .pip{width:44px;height:44px;border-radius:50%;border:2px solid var(--line);background:var(--card2);
     color:var(--dim);font-weight:600;font-size:14px;font-family:'Oswald',sans-serif;cursor:pointer;
     display:flex;align-items:center;justify-content:center;transition:transform .08s}
   .pip:active{transform:scale(.92)}
   .pip.done{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+  .load{display:flex;align-items:center;gap:2px;margin-left:auto;background:var(--card2);
+    border:1px solid var(--line);border-radius:999px;padding:2px}
+  .load button{width:34px;height:34px;border:none;background:none;color:var(--accent);
+    font-size:18px;font-weight:600;cursor:pointer;border-radius:50%;font-family:'Oswald',sans-serif}
+  .load button:active{background:var(--line)}
+  .load input{width:52px;background:none;border:none;color:var(--ink);text-align:center;
+    font-family:'Oswald',sans-serif;font-size:16px;font-weight:600;-moz-appearance:textfield}
+  .load input::-webkit-outer-spin-button,.load input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .load input:focus{outline:none;color:var(--accent)}
+  .load .unit{color:var(--dim);font-size:10px;padding-right:8px;letter-spacing:.05em}
 
   .cardio{background:var(--card);border:1px dashed var(--accent);border-radius:14px;padding:14px;margin-bottom:10px;font-size:14px;line-height:1.5}
   .cardio b{font-family:'Oswald',sans-serif;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
@@ -89,8 +115,11 @@
 <header>
   <div class="brand">
     <h1>Training <span>Card</span></h1>
-    <div class="phase" role="tablist" aria-label="Program phase">
-      <button id="phL" class="on">Launch</button><button id="phS">School</button>
+    <div class="hdr-right">
+      <div class="phase" role="tablist" aria-label="Program phase">
+        <button id="phL" class="on">Launch</button><button id="phS">School</button>
+      </div>
+      <button class="wake" id="wakeBtn" title="Keep screen awake" aria-label="Keep screen awake">☀</button>
     </div>
   </div>
   <div class="chips" id="chips"></div>
@@ -101,8 +130,11 @@
 <nav>
   <button class="pill" onclick="dlgWarm.showModal()">Warm-Up</button>
   <button class="pill" onclick="dlgPain.showModal()">Pain Rules</button>
-  <button class="pill" onclick="dlgNutri.showModal()">Daily Targets</button>
+  <button class="pill" onclick="dlgNutri.showModal()">Targets</button>
+  <button class="pill" id="deloadBtn">Deload</button>
 </nav>
+
+<div id="timer" role="timer" aria-live="polite"></div>
 
 <dialog id="dlgWarm"><div class="sheet">
   <h2>Warm-Up · ~8 min</h2>
@@ -188,7 +220,7 @@ const DAYS = [
    {n:"Pallof Press", s:[2,2], r:"10/side", note:""}]}
 ];
 
-let state = { phase: 1, day: "ua", checks: {} }; // phase 1=Launch, 0=School
+let state = { phase: 1, day: "ua", checks: {}, weights: {}, deload: false, lastDone: {} };
 
 const hasStorage = typeof window !== "undefined"
   && window.storage
@@ -228,31 +260,103 @@ function save(){
 
 function chips(){
   const c = document.getElementById("chips");
-  c.innerHTML = DAYS.map(d=>`
-    <button class="chip ${state.day===d.id?"on":""}" data-day="${d.id}">
-      ${d.chip}<small>${d.sub}</small>
-    </button>`).join("");
+  c.innerHTML = DAYS.map(d=>{
+    const ago = agoLabel(state.lastDone[d.id]);
+    return `<button class="chip ${state.day===d.id?"on":""}" data-day="${d.id}">
+      ${d.chip}<small>${ago || d.sub}</small>
+    </button>`;
+  }).join("");
   c.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{ state.day=b.dataset.day; save(); render(); });
 }
 
-function keyFor(exIdx){ return state.day+"-"+state.phase+"-"+exIdx; }
+function keyFor(exIdx){ return (state.deload?"d-":"")+state.day+"-"+state.phase+"-"+exIdx; }
+function wKey(exIdx){ return state.day+"-"+exIdx; } // weight is phase-independent
+
+// Rest seconds inferred from the rep range (heavier = longer)
+function restFor(e){
+  if(/AMRAP/i.test(e.r)) return 120;
+  const n = parseInt(e.r);
+  if(isNaN(n)) return 90;
+  if(n<=6) return 180;
+  if(n<=8) return 150;
+  if(n<=10) return 120;
+  if(n<=12) return 90;
+  return 60;
+}
+function round5(x){ return Math.round(x/5)*5; }
+function agoLabel(iso){
+  if(!iso) return "";
+  const days = Math.floor((Date.now()-new Date(iso).getTime())/86400000);
+  return days<=0 ? "today" : days===1 ? "1d ago" : days+"d ago";
+}
+
+// ---- Rest timer ----
+let timerInt = null;
+const timerEl = document.getElementById("timer");
+function startTimer(sec){
+  clearInterval(timerInt);
+  let end = Date.now() + sec*1000;
+  timerEl.style.display = "block";
+  const tick = ()=>{
+    const left = Math.max(0, Math.round((end-Date.now())/1000));
+    const m = Math.floor(left/60), s = String(left%60).padStart(2,"0");
+    timerEl.innerHTML = `REST <b>${m}:${s}</b>`;
+    if(left<=0){
+      clearInterval(timerInt);
+      timerEl.innerHTML = `<b>GO</b>`;
+      if(navigator.vibrate) navigator.vibrate([200,100,200]);
+      setTimeout(()=>{ timerEl.style.display="none"; }, 2500);
+    }
+  };
+  tick();
+  timerInt = setInterval(tick, 250);
+}
+timerEl.onclick = ()=>{ clearInterval(timerInt); timerEl.style.display="none"; };
+
+// ---- Wake lock ----
+let wakeLock = null;
+const wakeBtn = document.getElementById("wakeBtn");
+async function toggleWake(){
+  if(wakeLock){ try{ await wakeLock.release(); }catch(e){} wakeLock=null; wakeBtn.classList.remove("on"); return; }
+  try{
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeBtn.classList.add("on");
+    wakeLock.addEventListener("release", ()=>{ wakeLock=null; wakeBtn.classList.remove("on"); });
+  }catch(e){ wakeBtn.classList.remove("on"); } // unsupported or not HTTPS — silently unavailable
+}
+wakeBtn.onclick = toggleWake;
+document.addEventListener("visibilitychange", ()=>{ // re-acquire when returning to the tab
+  if(document.visibilityState==="visible" && wakeBtn.classList.contains("on") && !wakeLock) toggleWake();
+});
 
 function render(){
   document.getElementById("phL").classList.toggle("on", state.phase===1);
   document.getElementById("phS").classList.toggle("on", state.phase===0);
+  document.getElementById("deloadBtn").classList.toggle("on", state.deload);
   chips();
   const d = DAYS.find(x=>x.id===state.day);
   const m = document.getElementById("main");
-  let html = `<div class="daytitle">${d.title}</div><div class="daysub">${d.subtitle}</div>`;
+  let html = `<div class="daytitle">${d.title}${state.deload?'<span class="deload-tag">DELOAD · 60%</span>':""}</div>
+    <div class="daysub">${state.deload?"Half the sets, 60% of your saved weights. Weights are locked while deloading.":d.subtitle}</div>`;
   html += d.ex.map((e,i)=>{
-    const total = e.s[state.phase];
+    const full = e.s[state.phase];
+    const total = state.deload ? Math.ceil(full/2) : full;
     const done = state.checks[keyFor(i)] || 0;
+    const wSaved = state.weights[wKey(i)];
+    const w = state.deload ? (wSaved ? round5(wSaved*0.6) : undefined) : wSaved;
     const pips = Array.from({length:total},(_,k)=>
       `<button class="pip ${k<done?"done":""}" data-ex="${i}" data-set="${k+1}" aria-label="Set ${k+1} of ${e.n}">${k+1}</button>`).join("");
     return `<div class="ex ${done>=total?"complete":""}">
       <div class="top"><h3>${e.n}</h3><div class="reps">${total} × ${e.r}</div></div>
-      ${e.note?`<div class="note">${e.note}</div>`:""}
-      <div class="pips">${pips}</div>
+      ${e.note && !state.deload?`<div class="note">${e.note}</div>`:""}
+      <div class="pips">${pips}
+        <div class="load ${state.deload?"locked":""}">
+          <button data-w="-5" data-ex="${i}" aria-label="Decrease weight">−</button>
+          <input type="number" inputmode="numeric" data-wex="${i}" value="${w ?? ""}" placeholder="—" aria-label="Weight for ${e.n}">
+          <span class="unit">LB</span>
+          <button data-w="5" data-ex="${i}" aria-label="Increase weight">+</button>
+        </div>
+      </div>
     </div>`;
   }).join("");
   if(d.cardio) html += `<div class="cardio"><b>Finisher</b> · ${d.cardio}</div>`;
@@ -262,8 +366,30 @@ function render(){
   m.querySelectorAll(".pip").forEach(p=>p.onclick=()=>{
     const i = +p.dataset.ex, set = +p.dataset.set;
     const k = keyFor(i);
+    const before = state.checks[k] || 0;
     state.checks[k] = (state.checks[k]===set) ? set-1 : set; // tap last filled pip to untick
+    if((state.checks[k]||0) > before) startTimer(restFor(d.ex[i])); // only on ticking a set done
+    const allDone = d.ex.every((e2,j)=>{
+      const t = state.deload ? Math.ceil(e2.s[state.phase]/2) : e2.s[state.phase];
+      return (state.checks[keyFor(j)]||0) >= t;
+    });
+    if(allDone) state.lastDone[state.day] = new Date().toISOString();
     save(); render();
+  });
+  m.querySelectorAll(".load button").forEach(b=>b.onclick=()=>{
+    if(state.deload) return;
+    const i = +b.dataset.ex, k = wKey(i);
+    const cur = state.weights[k] || 0;
+    const next = Math.max(0, cur + (+b.dataset.w));
+    state.weights[k] = next; save();
+    const inp = m.querySelector(`input[data-wex="${i}"]`);
+    if(inp) inp.value = next;
+  });
+  m.querySelectorAll(".load input").forEach(inp=>inp.onchange=()=>{
+    if(state.deload) return;
+    const i = +inp.dataset.wex, v = parseFloat(inp.value);
+    if(!isNaN(v) && v>=0){ state.weights[wKey(i)] = v; } else { delete state.weights[wKey(i)]; inp.value=""; }
+    save();
   });
   document.getElementById("clearDay").onclick=()=>{
     const d2 = DAYS.find(x=>x.id===state.day);
@@ -271,6 +397,8 @@ function render(){
     save(); render();
   };
 }
+
+document.getElementById("deloadBtn").onclick=()=>{ state.deload=!state.deload; save(); render(); };
 
 document.getElementById("phL").onclick=()=>{ state.phase=1; save(); render(); };
 document.getElementById("phS").onclick=()=>{ state.phase=0; save(); render(); };
