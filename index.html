@@ -37,6 +37,18 @@
   .load.locked{opacity:.7}
   .load.locked button{pointer-events:none;color:var(--line)}
   .load.locked input{pointer-events:none;color:var(--accent)}
+
+  .logrow{border-top:1px solid var(--line);padding:12px 0}
+  .loglabel{font-weight:600;font-size:14px;margin-bottom:8px}
+  .loghint{color:var(--dim);font-weight:400;font-size:11.5px;margin-left:6px}
+  .logentry{display:flex;gap:8px}
+  .logentry input{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+    color:var(--ink);padding:10px 12px;font-family:'Oswald',sans-serif;font-size:16px}
+  .logentry input:focus{outline:none;border-color:var(--accent)}
+  .logbtn{background:var(--accent);color:var(--accent-ink);border:none;border-radius:10px;
+    padding:0 18px;font-weight:600;font-family:'Inter',sans-serif;font-size:13px;cursor:pointer}
+  .logstat{color:var(--dim);font-size:12.5px;margin-top:8px;line-height:1.5}
+  .logstat b{color:var(--accent);font-family:'Oswald',sans-serif;letter-spacing:.02em}
   .phase button:focus-visible,.chip:focus-visible,.pill:focus-visible,.pip:focus-visible,.ghost:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   .chips{display:flex;gap:8px;overflow-x:auto;padding:12px 0 4px;scrollbar-width:none}
@@ -129,10 +141,45 @@
 
 <nav>
   <button class="pill" onclick="dlgWarm.showModal()">Warm-Up</button>
-  <button class="pill" onclick="dlgPain.showModal()">Pain Rules</button>
+  <button class="pill" onclick="dlgPain.showModal()">Pain</button>
   <button class="pill" onclick="dlgNutri.showModal()">Targets</button>
   <button class="pill" id="deloadBtn">Deload</button>
+  <button class="pill" onclick="openLog()">Log</button>
 </nav>
+
+<dialog id="dlgLog"><div class="sheet">
+  <h2>Progress Log</h2>
+
+  <div class="logrow">
+    <div class="loglabel">Body weight <span class="loghint">3–4 mornings/wk</span></div>
+    <div class="logentry">
+      <input type="number" inputmode="decimal" step="0.1" id="inBW" placeholder="lbs">
+      <button class="logbtn" data-log="bw">Log</button>
+    </div>
+    <div class="logstat" id="statBW"></div>
+  </div>
+
+  <div class="logrow">
+    <div class="loglabel">Waist at navel <span class="loghint">monthly</span></div>
+    <div class="logentry">
+      <input type="number" inputmode="decimal" step="0.25" id="inWaist" placeholder="in">
+      <button class="logbtn" data-log="waist">Log</button>
+    </div>
+    <div class="logstat" id="statWaist"></div>
+  </div>
+
+  <div class="logrow">
+    <div class="loglabel">Flexed arm <span class="loghint">monthly</span></div>
+    <div class="logentry">
+      <input type="number" inputmode="decimal" step="0.25" id="inArm" placeholder="in">
+      <button class="logbtn" data-log="arm">Log</button>
+    </div>
+    <div class="logstat" id="statArm"></div>
+  </div>
+
+  <p class="dim" style="margin-top:10px">Also monthly: progress photos — same poses, lighting, and time of day as your baseline. And note any shoulder pain trend for the PT.</p>
+  <button onclick="dlgLog.close()">Done</button>
+</div></dialog>
 
 <div id="timer" role="timer" aria-live="polite"></div>
 
@@ -220,7 +267,7 @@ const DAYS = [
    {n:"Pallof Press", s:[2,2], r:"10/side", note:""}]}
 ];
 
-let state = { phase: 1, day: "ua", checks: {}, weights: {}, deload: false, lastDone: {} };
+let state = { phase: 1, day: "ua", checks: {}, weights: {}, deload: false, lastDone: {}, log: { bw: [], waist: [], arm: [] } };
 
 const hasStorage = typeof window !== "undefined"
   && window.storage
@@ -291,10 +338,29 @@ function agoLabel(iso){
 }
 
 // ---- Rest timer ----
-let timerInt = null;
+let timerInt = null, hideT = null, audioCtx = null;
 const timerEl = document.getElementById("timer");
+function initAudio(){ // must be created from a user gesture to be allowed to play later
+  if(!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
+  if(audioCtx && audioCtx.state==="suspended") audioCtx.resume().catch(()=>{});
+}
+function beep(){
+  if(!audioCtx) return;
+  try{
+    [0, .25].forEach(t=>{
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type="sine"; o.frequency.value=880;
+      g.gain.setValueAtTime(.0001, audioCtx.currentTime+t);
+      g.gain.exponentialRampToValueAtTime(.3, audioCtx.currentTime+t+.02);
+      g.gain.exponentialRampToValueAtTime(.0001, audioCtx.currentTime+t+.18);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(audioCtx.currentTime+t); o.stop(audioCtx.currentTime+t+.2);
+    });
+  }catch(e){}
+}
 function startTimer(sec){
   clearInterval(timerInt);
+  clearTimeout(hideT); // cancel a pending "GO" auto-hide from the previous timer
   let end = Date.now() + sec*1000;
   timerEl.style.display = "block";
   const tick = ()=>{
@@ -305,13 +371,14 @@ function startTimer(sec){
       clearInterval(timerInt);
       timerEl.innerHTML = `<b>GO</b>`;
       if(navigator.vibrate) navigator.vibrate([200,100,200]);
-      setTimeout(()=>{ timerEl.style.display="none"; }, 2500);
+      beep();
+      hideT = setTimeout(()=>{ timerEl.style.display="none"; }, 2500);
     }
   };
   tick();
   timerInt = setInterval(tick, 250);
 }
-timerEl.onclick = ()=>{ clearInterval(timerInt); timerEl.style.display="none"; };
+timerEl.onclick = ()=>{ clearInterval(timerInt); clearTimeout(hideT); timerEl.style.display="none"; };
 
 // ---- Wake lock ----
 let wakeLock = null;
@@ -364,6 +431,7 @@ function render(){
   m.innerHTML = html;
 
   m.querySelectorAll(".pip").forEach(p=>p.onclick=()=>{
+    initAudio(); // unlock audio for the end-of-rest beep
     const i = +p.dataset.ex, set = +p.dataset.set;
     const k = keyFor(i);
     const before = state.checks[k] || 0;
@@ -399,6 +467,53 @@ function render(){
 }
 
 document.getElementById("deloadBtn").onclick=()=>{ state.deload=!state.deload; save(); render(); };
+
+// ---- Progress log ----
+function avg(arr){ return arr.reduce((a,b)=>a+b,0)/arr.length; }
+function fmtDate(iso){ const d=new Date(iso); return (d.getMonth()+1)+"/"+d.getDate(); }
+function logStats(){
+  if(!state.log) state.log = { bw:[], waist:[], arm:[] };
+  const L = state.log;
+  // Body weight: 7-day avg vs previous 7-day avg
+  const now = Date.now(), wk = 7*86400000;
+  const cur = L.bw.filter(e=>now-new Date(e.d).getTime() < wk).map(e=>e.v);
+  const prev = L.bw.filter(e=>{const a=now-new Date(e.d).getTime(); return a>=wk && a<2*wk;}).map(e=>e.v);
+  let bwTxt = "No entries yet — weigh in tomorrow morning.";
+  if(cur.length){
+    bwTxt = `7-day avg: <b>${avg(cur).toFixed(1)} lb</b> (${cur.length} entries)`;
+    if(prev.length){
+      const diff = avg(cur)-avg(prev);
+      bwTxt += ` · vs last week: <b>${diff>0?"+":""}${diff.toFixed(1)}</b>`;
+      bwTxt += (diff<=-0.2 && diff>=-0.7) ? " ✓ on pace" : "";
+    }
+  }
+  document.getElementById("statBW").innerHTML = bwTxt;
+  const meas = (arr, unit)=>{
+    if(!arr.length) return "No entries yet.";
+    const last = arr[arr.length-1];
+    let t = `Last: <b>${last.v}${unit}</b> on ${fmtDate(last.d)}`;
+    if(arr.length>1){
+      const d0 = arr[0];
+      const diff = last.v - d0.v;
+      t += ` · since start: <b>${diff>0?"+":""}${diff.toFixed(2).replace(/\.?0+$/,"")}${unit}</b>`;
+    }
+    return t;
+  };
+  document.getElementById("statWaist").innerHTML = meas(state.log.waist, '"');
+  document.getElementById("statArm").innerHTML = meas(state.log.arm, '"');
+}
+function openLog(){ logStats(); dlgLog.showModal(); }
+document.querySelectorAll(".logbtn").forEach(b=>b.onclick=()=>{
+  const kind = b.dataset.log;
+  const inp = { bw: inBW, waist: inWaist, arm: inArm }[kind];
+  const v = parseFloat(inp.value);
+  if(isNaN(v) || v<=0) return;
+  if(!state.log) state.log = { bw:[], waist:[], arm:[] };
+  state.log[kind].push({ d: new Date().toISOString(), v });
+  if(state.log[kind].length>200) state.log[kind].shift(); // keep it lean
+  inp.value = "";
+  save(); logStats();
+});
 
 document.getElementById("phL").onclick=()=>{ state.phase=1; save(); render(); };
 document.getElementById("phS").onclick=()=>{ state.phase=0; save(); render(); };
