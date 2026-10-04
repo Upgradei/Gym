@@ -16,6 +16,7 @@ try{
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'phone layout should not overflow');
  await page.screenshot({path:'test-results/phone-plan.png',fullPage:true});
  await page.getByRole('button',{name:'Start workout',exact:true}).click();
+ assert.equal(await page.locator('#chips').isVisible(),false,'session hides plan navigation');
  for(let n=1;n<=4;n++){
   await page.getByLabel(`Chest-Supported Row set ${n} weight`,{exact:true}).fill('100');
   await page.getByLabel(`Chest-Supported Row set ${n} reps`,{exact:true}).fill('12');
@@ -28,6 +29,8 @@ try{
  await page.screenshot({path:'test-results/phone-session.png',fullPage:true});
  await page.getByRole('button',{name:'Finish workout',exact:true}).click();
  await page.getByRole('heading',{name:'Your progress'}).waitFor();
+ assert.equal(await page.locator('#chips').isVisible(),false,'progress hides plan navigation');
+ assert.equal(await page.evaluate(()=>scrollY),0,'new view begins at top');
  assert.equal((await saved()).sessions.length,1);
  assert.equal((await saved()).activeId,null);
  await page.screenshot({path:'test-results/phone-progress.png',fullPage:true});

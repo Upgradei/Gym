@@ -93,8 +93,8 @@ document.addEventListener('click',async event=>{
  const b=event.target.closest('button');if(!b||!state)return;
  try{
   if(b.dataset.day){dayId=b.dataset.day;render();return;}
-  if(b.dataset.view){view=b.dataset.view;editingId=null;render();return;}
-  if(b.dataset.editSession){editingId=b.dataset.editSession;view='workout';expanded.clear();render();return;}
+  if(b.dataset.view){view=b.dataset.view;editingId=null;render();window.scrollTo(0,0);return;}
+  if(b.dataset.editSession){editingId=b.dataset.editSession;view='workout';expanded.clear();render();window.scrollTo(0,0);return;}
   if(b.dataset.editLog){const m=state.measurements[b.dataset.kind].find(x=>x.id===b.dataset.editLog);const v=prompt('Correct value:',m.v);if(v!==null&&Number.isFinite(+v)&&+v>0&&+v<=2000){m.v=+v;await persist();modal.close();logDialog();render();}return;}
   const a=b.dataset.action,s=active(),i=+b.dataset.ex,j=+b.dataset.set;
   if(store.blocked&&['start','set','skip','finish','discard','add-log','save-settings'].includes(a))throw Error('Saving is paused to protect existing data. Export a backup and reload, or import a valid backup in Settings.');
@@ -107,6 +107,7 @@ document.addEventListener('click',async event=>{
   if(a==='deload'){deload=!deload;render();return;}
   if(a==='start'){createSession(state,DAYS.find(d=>d.id===dayId),variantMeta,{deload});expanded.clear();await persist();render();return;}
   if(a==='set'){
+   const invalid=[...main.querySelectorAll('input')].find(el=>!el.checkValidity());if(invalid){invalid.reportValidity();return;}
    const e=s.exercises[i],t=e.sets[j];if(!t.done&&(t.weight===null||t.reps===null||t.reps<=0))throw Error('Enter a weight (0 for bodyweight) and a positive result before checking this set.');
    t.done=!t.done;s.updatedAt=new Date().toISOString();if(t.done&&!editingId)startRest(e.rest);await persist();render();return;
   }
@@ -119,9 +120,10 @@ document.addEventListener('click',async event=>{
   if(a==='discard'){if(!confirm('Discard this in-progress workout? Finished history will stay unchanged.'))return;state.sessions=state.sessions.filter(x=>x.id!==s.id);state.activeId=null;editingId=null;await persist();render();return;}
   if(a==='leave'){view='progress';await persist();render();return;}
   if(a==='finish'){
+   const invalid=[...main.querySelectorAll('input')].find(el=>!el.checkValidity());if(invalid){invalid.reportValidity();return;}
    const pending=s.exercises.reduce((n,e)=>n+(e.skipped?0:e.sets.filter(t=>!t.done).length),0);
    if(pending&&!confirm(`Finish with ${completedSets(s)} completed sets and ${pending} unfinished sets? Your completed work will be saved.`))return;
-   finishSession(state,s.id);await persist();editingId=null;view='progress';$('timer').click();render();announce('Workout saved');return;
+   finishSession(state,s.id);await persist();editingId=null;view='progress';$('timer').click();render();window.scrollTo(0,0);announce('Workout saved');return;
   }
   if(a==='add-log'){
    const v=+$('logValue').value,date=$('logDate').value,kind=$('logKind').value;
