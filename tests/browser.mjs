@@ -1,0 +1,90 @@
+// End-to-end checks use isolated browser storage. No real workout data is touched.
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import {mkdir,readFile} from 'node:fs/promises';
+const browser=await chromium.launch({headless:true});
+const base=process.env.TEST_URL||'http://127.0.0.1:8080';
+const context=await browser.newContext({viewport:{width:390,height:844},timezoneId:'America/Detroit',locale:'en-US',acceptDownloads:true});
+const page=await context.newPage(),errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+page.on('dialog',d=>d.accept());
+await mkdir('test-results',{recursive:true});
+const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('gym-card-state-v2')));
+async function open(){await page.goto(base);await page.getByRole('button',{name:'Start workout',exact:true}).waitFor();}
+try{
+ await open();
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'phone layout should not overflow');
+ await page.screenshot({path:'test-results/phone-plan.png',fullPage:true});
+ await page.getByRole('button',{name:'Start workout',exact:true}).click();
+ for(let n=1;n<=4;n++){
+  await page.getByLabel(`Chest-Supported Row set ${n} weight`,{exact:true}).fill('100');
+  await page.getByLabel(`Chest-Supported Row set ${n} reps`,{exact:true}).fill('12');
+  await page.getByRole('button',{name:`Complete Chest-Supported Row set ${n}`,exact:true}).click();
+ }
+ assert.equal((await saved()).sessions[0].exercises[0].sets[0].weight,100);
+ await page.reload();
+ await page.getByRole('button',{name:'Finish workout',exact:true}).waitFor();
+ assert.equal((await saved()).sessions[0].exercises[0].sets.filter(s=>s.done).length,4,'refresh resumes');
+ await page.screenshot({path:'test-results/phone-session.png',fullPage:true});
+ await page.getByRole('button',{name:'Finish workout',exact:true}).click();
+ await page.getByRole('heading',{name:'Your progress'}).waitFor();
+ assert.equal((await saved()).sessions.length,1);
+ assert.equal((await saved()).activeId,null);
+ await page.screenshot({path:'test-results/phone-progress.png',fullPage:true});
+ await page.getByRole('button',{name:'Workout',exact:true}).click();
+ await page.getByRole('button',{name:'Start workout',exact:true}).click();
+ assert.equal(await page.getByLabel('Chest-Supported Row set 1 weight',{exact:true}).inputValue(),'105');
+ assert.equal((await saved()).sessions[0].exercises[0].sets[0].weight,100,'old load is immutable when suggesting new load');
+ await page.getByRole('button',{name:'Discard workout',exact:true}).click();
+ await page.getByRole('button',{name:'Log',exact:true}).click();
+ await page.locator('#logValue').fill('180');
+ await page.getByRole('button',{name:'Save measurement',exact:true}).click();
+ assert.equal((await saved()).measurements.bw.length,1);
+ await page.getByRole('button',{name:'Done',exact:true}).click();
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ await page.locator('#goal').selectOption('maintain');
+ await page.locator('#minutes').fill('30');
+ await page.locator('#globalNotes').fill('Use my preferred setup.');
+ await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ assert.equal((await saved()).settings.goal,'maintain');
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ const downloading=page.waitForEvent('download');
+ await page.getByRole('button',{name:'Export backup',exact:true}).click();
+ const download=await downloading;
+ await download.saveAs('test-results/roundtrip.json');
+ const exported=JSON.parse(await readFile('test-results/roundtrip.json','utf8'));
+ assert.equal(exported.state.sessions.length,1);
+ await page.locator('#importFile').setInputFiles('test-results/roundtrip.json');
+ await page.getByRole('button',{name:'Start workout',exact:true}).waitFor();
+ assert.deepEqual(await saved(),exported.state,'export/import roundtrip');
+ // Equipment selection must separate histories, even when display names are identical.
+ const first=page.locator('article.ex').first();
+ await first.locator('summary').click();
+ await first.getByLabel('Equipment name (optional; separate history)',{exact:true}).fill('Machine B');
+ await first.getByLabel('Equipment name (optional; separate history)',{exact:true}).press('Tab');
+ await page.getByRole('button',{name:'Start workout',exact:true}).click();
+ assert.equal(await page.getByLabel('Chest-Supported Row · Machine B set 1 weight',{exact:true}).inputValue(),'');
+ await page.getByLabel('Chest-Supported Row · Machine B set 1 weight',{exact:true}).fill('50');
+ await page.getByLabel('Chest-Supported Row · Machine B set 1 reps',{exact:true}).fill('10');
+ await page.getByRole('button',{name:'Complete Chest-Supported Row · Machine B set 1',exact:true}).click();
+ await page.getByRole('button',{name:'Finish workout',exact:true}).click();
+ assert.equal(await page.locator('#liftSelect option').count(),2);
+ await page.getByRole('button',{name:'Edit',exact:true}).first().click();
+ await page.getByLabel('Chest-Supported Row · Machine B set 1 reps',{exact:true}).fill('11');
+ await page.getByRole('button',{name:'Save corrections',exact:true}).click();
+ assert.equal((await saved()).sessions[1].exercises[0].sets[0].reps,11);
+ // Migrate in a separate, fresh profile, leaving old storage untouched.
+ const legacyContext=await browser.newContext({viewport:{width:390,height:844},timezoneId:'America/Detroit'});
+ const p=await legacyContext.newPage();p.on('pageerror',e=>errors.push(e.message));
+ const original={weights:{'ua-0':100},checks:{'ua-0-0':4},exNotes:{'ua-0':'Seat 3'},history:{lifts:{},sessions:[]},log:{bw:[{d:'2026-10-03T14:00:00Z',v:180}],waist:[],arm:[]}};
+ await p.addInitScript(data=>{if(!localStorage.getItem('gym-card-state'))localStorage.setItem('gym-card-state',JSON.stringify(data));},original);
+ await p.goto(base);await p.getByRole('button',{name:'Start workout',exact:true}).waitFor();
+ assert.deepEqual(await p.evaluate(()=>JSON.parse(localStorage.getItem('gym-card-state'))),original);
+ assert.deepEqual(await p.evaluate(()=>JSON.parse(localStorage.getItem('gym-card-state-v2')).legacy),original);
+ await p.getByRole('button',{name:'Start workout',exact:true}).click();
+ assert.equal(await p.getByLabel('Chest-Supported Row set 1 weight',{exact:true}).inputValue(),'100');
+ assert.equal(await p.getByRole('button',{name:'Complete Chest-Supported Row set 1',exact:true}).getAttribute('aria-pressed'),'false');
+ await legacyContext.close();
+ assert.deepEqual(errors,[],'no uncaught browser errors');
+ console.log('PASS: phone layout, workout completion, partial session, reload/resume, progression, history edits, equipment separation, measurements, settings, backup roundtrip, legacy migration, zero browser errors.');
+}catch(error){await page.screenshot({path:'test-results/failure.png',fullPage:true});console.error(await page.locator('body').innerText());throw error;}finally{await browser.close();}
